@@ -160,7 +160,8 @@ foo_id := sql db {
 ```
 
 You can insert a flat array of records in one statement. Bulk inserts currently
-support primitive, enum, and `time.Time` fields.
+support primitive, enum, and `time.Time` fields. Rows with `serial` or `default`
+fields fall back to per-row inserts so each row keeps normal default handling.
 
 ```v ignore
 users := [
@@ -201,26 +202,6 @@ foo := Foo{
 
 sql db {
     upsert foo into Foo
-}!
-```
-
-Arrays can be upserted too. The generic ORM implementation applies the same
-matching rules for each record.
-
-```v ignore
-users := [
-    User{
-        id:   1
-        name: 'Alice'
-    },
-    User{
-        id:   2
-        name: 'Bob'
-    },
-]
-
-sql db {
-    upsert users into User
 }!
 ```
 

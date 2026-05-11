@@ -569,6 +569,10 @@ fn (mut c Checker) sql_stmt_line(mut node ast.SqlStmtLine) ast.Type {
 
 		insert_sym := c.table.sym(inserting_object_type)
 		if insert_sym.kind == .array {
+			if node.kind == .upsert {
+				c.orm_error('upsert currently does not support arrays', node.pos)
+				return ast.void_type
+			}
 			is_array_insert = true
 			elem_type := insert_sym.array_info().elem_type
 			if elem_type.is_ptr() {

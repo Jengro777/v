@@ -10,7 +10,12 @@ struct OrmBulkDefaultRow {
 	id int @[primary; sql: serial]
 }
 
-fn test_orm_bulk_insert_update_and_upsert() {
+struct OrmBulkRenamedUser {
+	id           int    @[primary]
+	display_name string @[sql: 'display_name_text']
+}
+
+fn test_orm_bulk_insert_and_update() {
 	mut db := sqlite.connect(':memory:')!
 	defer {
 		db.close() or { panic(err) }
@@ -81,43 +86,6 @@ fn test_orm_bulk_insert_update_and_upsert() {
 	assert updated_second.len == 1
 	assert updated_second[0].name == 'Robert'
 	assert updated_second[0].age == 31
-
-	upserts := [
-		OrmBulkUser{
-			id:   1
-			name: 'Alice Updated'
-			age:  27
-		},
-		OrmBulkUser{
-			id:   3
-			name: 'Charlie'
-			age:  35
-		},
-	]
-
-	sql db {
-		upsert upserts into OrmBulkUser
-	}!
-
-	upserted_first := sql db {
-		select from OrmBulkUser where id == 1
-	}!
-	upserted_second := sql db {
-		select from OrmBulkUser where id == 2
-	}!
-	upserted_third := sql db {
-		select from OrmBulkUser where id == 3
-	}!
-
-	assert upserted_first.len == 1
-	assert upserted_first[0].name == 'Alice Updated'
-	assert upserted_first[0].age == 27
-	assert upserted_second.len == 1
-	assert upserted_second[0].name == 'Robert'
-	assert upserted_second[0].age == 31
-	assert upserted_third.len == 1
-	assert upserted_third[0].name == 'Charlie'
-	assert upserted_third[0].age == 35
 }
 
 fn test_orm_bulk_insert_preserves_all_default_rows() {
@@ -144,4 +112,83 @@ fn test_orm_bulk_insert_preserves_all_default_rows() {
 	assert inserted[0].id == 1
 	assert inserted[1].id == 2
 	assert inserted[2].id == 3
+}
+
+fn test_orm_bulk_insert_with_mixed_serial_values_keeps_defaults() {
+	mut db := sqlite.connect(':memory:')!
+	defer {
+		db.close() or { panic(err) }
+	}
+
+	sql db {
+		create table OrmBulkDefaultRow
+	}!
+
+	rows := [
+		OrmBulkDefaultRow{},
+		OrmBulkDefaultRow{
+			id: 5
+		},
+	]
+
+	sql db {
+		insert rows into OrmBulkDefaultRow
+	}!
+
+	inserted := sql db {
+		select from OrmBulkDefaultRow order by id
+	}!
+
+	assert inserted.len == 2
+	assert inserted[0].id == 1
+	assert inserted[1].id == 5
+}
+
+fn test_orm_bulk_update_with_renamed_column() {
+	mut db := sqlite.connect(':memory:')!
+	defer {
+		db.close() or { panic(err) }
+	}
+
+	sql db {
+		create table OrmBulkRenamedUser
+	}!
+
+	users := [
+		OrmBulkRenamedUser{
+			id:           1
+			display_name: 'Alice'
+		},
+		OrmBulkRenamedUser{
+			id:           2
+			display_name: 'Bob'
+		},
+	]
+
+	sql db {
+		insert users into OrmBulkRenamedUser
+	}!
+
+	updates := [
+		OrmBulkRenamedUser{
+			id:           1
+			display_name: 'Alicia'
+		},
+		OrmBulkRenamedUser{
+			id:           2
+			display_name: 'Robert'
+		},
+	]
+
+	sql db {
+		update OrmBulkRenamedUser set display_name = updates.display_name where id == updates.id
+	}!
+
+	updated := sql db {
+		select from OrmBulkRenamedUser order by id
+	}!
+
+	assert updated.len == 2
+	assert updated[0].display_name == 'Alicia'
+	assert updated[1].display_name == 'Robert'
 }

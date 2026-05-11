@@ -868,7 +868,7 @@ fn (mut g Gen) write_orm_bulk_insert(node &ast.SqlStmtLine, table_name string, c
 	g.indent--
 	g.writeln('} else {')
 	g.indent++
-	if fields.len == auto_fields.len {
+	if auto_fields.len > 0 {
 		g.writeln('${result_var_name} = (${result_name}_void){0};')
 		g.writeln('for (${ast.int_type_name} ${idx_var} = 0; ${idx_var} < ${node.object_var}.len; ${idx_var}++) {')
 		g.indent++
@@ -949,12 +949,7 @@ fn (mut g Gen) write_orm_bulk_insert(node &ast.SqlStmtLine, table_name string, c
 }
 
 fn (mut g Gen) write_orm_upsert(node &ast.SqlStmtLine, table_name string, connection_var_name string, result_var_name string,
-	or_expr ast.OrExpr, table_attrs []ast.Attr) {
-	if node.is_array_insert {
-		g.write_orm_bulk_upsert(node, table_name, connection_var_name, result_var_name, or_expr,
-			table_attrs)
-		return
-	}
+	_ ast.OrExpr, table_attrs []ast.Attr) {
 	g.writeln('// sql { upsert into `${table_name}` }')
 	fields := node.fields
 	auto_fields := get_auto_field_idxs(fields)
@@ -1140,36 +1135,6 @@ fn (mut g Gen) write_orm_upsert(node &ast.SqlStmtLine, table_name string, connec
 	g.writeln('}')
 }
 
-fn (mut g Gen) write_orm_bulk_upsert(node &ast.SqlStmtLine, table_name string, connection_var_name string, result_var_name string,
-	or_expr ast.OrExpr, table_attrs []ast.Attr) {
-	row_type := g.styp(node.table_expr.typ)
-	row_var := g.new_tmp_var()
-	idx_var := g.new_tmp_var()
-	g.writeln('${result_name}_void ${result_var_name};')
-	g.writeln('if (${node.object_var}.len == 0) {')
-	g.indent++
-	g.writeln('${result_var_name} = (${result_name}_void){0};')
-	g.indent--
-	g.writeln('} else {')
-	g.indent++
-	g.writeln('${result_var_name} = (${result_name}_void){0};')
-	g.writeln('for (${ast.int_type_name} ${idx_var} = 0; ${idx_var} < ${node.object_var}.len; ${idx_var}++) {')
-	g.indent++
-	g.writeln('${row_type} ${row_var} = (*(${row_type}*)builtin__array_get(${node.object_var}, ${idx_var}));')
-	row_result_var := g.new_tmp_var()
-	mut row_node := *node
-	row_node.object_var = row_var
-	row_node.is_array_insert = false
-	g.write_orm_upsert(&row_node, table_name, connection_var_name, row_result_var, or_expr,
-		table_attrs)
-	g.or_block(row_result_var, or_expr, ast.int_type.set_flag(.result))
-	g.writeln('${result_var_name} = ${row_result_var};')
-	g.indent--
-	g.writeln('}')
-	g.indent--
-	g.writeln('}')
-}
-
 // write_orm_update writes C code that calls ORM functions for updating rows.
 fn (mut g Gen) write_orm_update(node &ast.SqlStmtLine, table_name string, connection_var_name string, result_var_name string, _ []ast.Attr) {
 	mut dynamic_update_data_var := ''
@@ -1286,7 +1251,7 @@ fn (mut g Gen) write_orm_bulk_update(node &ast.SqlStmtLine, table_name string, c
 	g.writeln('}')
 	for expr in node.update_exprs {
 		selector := expr as ast.SelectorExpr
-		value_field := g.get_orm_field_by_column_name(node.fields, selector.field_name) or {
+		value_field := get_orm_field_by_struct_field_name(node.fields, selector.field_name) or {
 			verror('ORM: field "${selector.field_name}" does not exist on "${g.sql_table_name}"')
 		}
 		g.writeln('for (${ast.int_type_name} ${idx_var} = 0; ${idx_var} < ${node.array_update_var}.len; ${idx_var}++) {')
@@ -1377,6 +1342,15 @@ fn (mut g Gen) write_orm_field_access_to_primitive(field ast.StructField, object
 	} else {
 		g.writeln('orm__${typ}_to_primitive(${field_access}),')
 	}
+}
+
+fn get_orm_field_by_struct_field_name(fields []ast.StructField, name string) ?ast.StructField {
+	for field in fields {
+		if field.name == name {
+			return field
+		}
+	}
+	return none
 }
 
 // write_orm_delete writes C code that calls ORM functions for deleting rows.
