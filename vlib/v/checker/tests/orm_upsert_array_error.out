@@ -1,0 +1,7 @@
+vlib/v/checker/tests/orm_upsert_array_error.vv:15:10: error: ORM: upsert currently does not support arrays
+   13 |     }]
+   14 |     sql db {
+   15 |         upsert users into UpsertArrayUser
+      |                ~~~~~
+   16 |     }!
+   17 | }
