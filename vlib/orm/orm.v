@@ -389,63 +389,33 @@ fn table_field_to_column_map(table Table) map[string]string {
 
 // apply_data_scope applies DataScope filters to a WHERE QueryData and returns the scoped query data.
 pub fn apply_data_scope(scope DataScope, table Table, where QueryData, scope_skip_fields []string) QueryData {
-	if !scope.enabled || scope.filters.len == 0 {
-		return where
-	}
-	if table_ignores_data_scope(table) {
-		return where
-	}
-	mut where_scoped := clone_query_data(where)
-	skip_all := '*' in scope_skip_fields
-	field_to_column := table_field_to_column_map(table)
-	// Wrap original WHERE clause in parentheses once, before adding scope filters
-	original_fields_len := where_scoped.fields.len
-	if original_fields_len > 1 {
-		where_scoped.parentheses << [0, original_fields_len - 1]
-	}
-	for filter in scope.filters {
-		if filter.field == '' || filter.field in where_scoped.fields {
-			continue
-		}
-		if skip_all || filter.field in scope_skip_fields {
-			continue
-		}
-		if table.fields.len > 0 && filter.field !in table.fields {
-			continue
-		}
-		// Resolve SQL column name from struct field name (O(1) via lookup map)
-		mut column_name := filter.field
-		if resolved := field_to_column[filter.field] {
-			column_name = resolved
-		}
-		// Check deduplication against SQL column name
-		if column_name in where_scoped.fields {
-			continue
-		}
-		where_scoped.is_and << true
-		where_scoped.fields << column_name.clone()
-		if !filter.operator.is_unary() {
-			where_scoped.data << filter.value
-			where_scoped.types << primitive_type(filter.value)
-		}
-		where_scoped.kinds << filter.operator
-	}
-	return where_scoped
+	return apply_scope_filters(scope, table, where, scope_skip_fields, true)
 }
 
 // apply_data_scope_insert applies DataScope filters to an INSERT QueryData and returns the scoped query data.
 pub fn apply_data_scope_insert(scope DataScope, table Table, data QueryData, scope_skip_fields []string) QueryData {
+	return apply_scope_filters(scope, table, data, scope_skip_fields, false)
+}
+
+// apply_scope_filters is the common core shared by apply_data_scope and
+// apply_data_scope_insert. In WHERE mode it also wraps original conditions
+// in parentheses and appends is_and / kinds markers.
+fn apply_scope_filters(scope DataScope, table Table, qd QueryData, scope_skip_fields []string, where_mode bool) QueryData {
 	if !scope.enabled || scope.filters.len == 0 {
-		return data
+		return qd
 	}
 	if table_ignores_data_scope(table) {
-		return data
+		return qd
 	}
-	mut data_scoped := clone_query_data(data)
+	mut result := clone_query_data(qd)
 	skip_all := '*' in scope_skip_fields
 	field_to_column := table_field_to_column_map(table)
+	// Wrap original WHERE clause in parentheses once, before adding scope filters
+	if where_mode && result.fields.len > 1 {
+		result.parentheses << [0, result.fields.len - 1]
+	}
 	for filter in scope.filters {
-		if filter.field == '' || filter.field in data_scoped.fields {
+		if filter.field == '' || filter.field in result.fields {
 			continue
 		}
 		if skip_all || filter.field in scope_skip_fields {
@@ -460,20 +430,26 @@ pub fn apply_data_scope_insert(scope DataScope, table Table, data QueryData, sco
 			column_name = resolved
 		}
 		// Check deduplication against SQL column name
-		if column_name in data_scoped.fields {
+		if column_name in result.fields {
 			continue
 		}
-		data_scoped.fields << column_name.clone()
+		if where_mode {
+			result.is_and << true
+		}
+		result.fields << column_name.clone()
 		if !filter.operator.is_unary() {
-			data_scoped.data << filter.value
-			data_scoped.types << primitive_type(filter.value)
+			result.data << filter.value
+			result.types << primitive_type(filter.value)
+		}
+		if where_mode {
+			result.kinds << filter.operator
 		}
 	}
-	return data_scoped
+	return result
 }
 
 // primitive_type returns the type index for a Primitive value.
-pub fn primitive_type(value Primitive) int {
+fn primitive_type(value Primitive) int {
 	return match value {
 		bool {
 			type_idx['bool']
