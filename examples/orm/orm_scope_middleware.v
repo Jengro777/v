@@ -1,9 +1,9 @@
-// orm_middleware.v - ORM middleware pattern demo
+// orm_scope_middleware.v - ORM middleware pattern demo
 //
 // Shows how middleware manages DataScope (multi-tenant) transparently.
 // Business code only changes acquire() -> pool_acquire_scoped().
 //
-// Run: v run orm_middleware.v
+// Run: v run orm_scope_middleware.v
 
 module main
 

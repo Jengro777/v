@@ -228,6 +228,16 @@ pub mut:
 	columns []string // SQL column names (parallel to fields), used for SQL generation
 }
 
+// new_table creates a Table with the given name and attributes.
+// Prefer using this constructor over positional initialization,
+// as new fields may be added to Table in future versions.
+pub fn new_table(name string, attrs []VAttribute) Table {
+	return Table{
+		name:  name
+		attrs: attrs
+	}
+}
+
 pub struct TableField {
 pub mut:
 	name        string
@@ -326,6 +336,9 @@ pub:
 }
 
 // QueryFilter represents a single filter condition in a DataScope.
+// `field` must be a struct field name (not SQL column name). It is automatically
+// resolved to the corresponding SQL column name via `Table.fields`/`Table.columns`
+// at query time. If the field cannot be resolved, the filter is skipped for that table.
 pub struct QueryFilter {
 pub:
 	field    string
@@ -369,6 +382,18 @@ pub fn apply_data_scope(scope DataScope, table Table, where QueryData, scope_ski
 	}
 	mut where_scoped := clone_query_data(where)
 	skip_all := '*' in scope_skip_fields
+	// Build field-to-column lookup map for O(1) resolution
+	mut field_to_column := map[string]string{}
+	if table.columns.len > 0 && table.columns.len == table.fields.len {
+		for j, field_name in table.fields {
+			field_to_column[field_name] = table.columns[j]
+		}
+	}
+	// Wrap original WHERE clause in parentheses once, before adding scope filters
+	original_fields_len := where_scoped.fields.len
+	if original_fields_len > 1 {
+		where_scoped.parentheses << [0, original_fields_len - 1]
+	}
 	for filter in scope.filters {
 		if filter.field == '' || filter.field in where_scoped.fields {
 			continue
@@ -379,27 +404,16 @@ pub fn apply_data_scope(scope DataScope, table Table, where QueryData, scope_ski
 		if table.fields.len > 0 && filter.field !in table.fields {
 			continue
 		}
-		// Resolve SQL column name from struct field name
+		// Resolve SQL column name from struct field name (O(1) via lookup map)
 		mut column_name := filter.field
-		if table.columns.len > 0 && table.columns.len == table.fields.len {
-			for j, field_name in table.fields {
-				if field_name == filter.field && j < table.columns.len {
-					column_name = table.columns[j].clone()
-					break
-				}
-			}
+		if resolved := field_to_column[filter.field] {
+			column_name = resolved
 		}
 		// Check deduplication against SQL column name
 		if column_name in where_scoped.fields {
 			continue
 		}
-		original_fields_len := where_scoped.fields.len
-		if original_fields_len > 1 {
-			where_scoped.parentheses << [0, original_fields_len - 1]
-		}
-		if original_fields_len > 0 {
-			where_scoped.is_and << true
-		}
+		where_scoped.is_and << true
 		where_scoped.fields << column_name.clone()
 		if !filter.operator.is_unary() {
 			where_scoped.data << filter.value
@@ -420,6 +434,13 @@ pub fn apply_data_scope_insert(scope DataScope, table Table, data QueryData, sco
 	}
 	mut data_scoped := clone_query_data(data)
 	skip_all := '*' in scope_skip_fields
+	// Build field-to-column lookup map for O(1) resolution
+	mut field_to_column := map[string]string{}
+	if table.columns.len > 0 && table.columns.len == table.fields.len {
+		for j, field_name in table.fields {
+			field_to_column[field_name] = table.columns[j]
+		}
+	}
 	for filter in scope.filters {
 		if filter.field == '' || filter.field in data_scoped.fields {
 			continue
@@ -430,7 +451,16 @@ pub fn apply_data_scope_insert(scope DataScope, table Table, data QueryData, sco
 		if table.fields.len > 0 && filter.field !in table.fields {
 			continue
 		}
-		data_scoped.fields << filter.field
+		// Resolve SQL column name from struct field name (O(1) via lookup map)
+		mut column_name := filter.field
+		if resolved := field_to_column[filter.field] {
+			column_name = resolved
+		}
+		// Check deduplication against SQL column name
+		if column_name in data_scoped.fields {
+			continue
+		}
+		data_scoped.fields << column_name.clone()
 		data_scoped.data << filter.value
 		data_scoped.types << primitive_type(filter.value)
 	}
