@@ -309,6 +309,11 @@ mut:
 	orm_release_savepoint(name string) !
 }
 
+enum ScopeMode {
+	where
+	insert
+}
+
 fn table_ignores_data_scope(table Table) bool {
 	for attr in table.attrs {
 		if attr_name_matches(attr.name, 'unscoped') {
@@ -322,11 +327,12 @@ fn table_ignores_data_scope(table Table) bool {
 // When the wrapped connection also implements TransactionalConnection,
 // the DB will transparently proxy transaction methods (orm_begin, orm_commit, ...).
 pub struct DB {
-pub mut:
+mut:
 	conn Connection
 pub:
 	scope           DataScope
-	unscoped_fields []string
+	skip_all_scopes bool
+	skip_fields     []string // specific scope filter fields to skip, when skip_all_scopes is false
 }
 
 // DataScope holds the per-connection data scope configuration for automatic filtering.
@@ -354,24 +360,27 @@ pub fn new_db(conn Connection, scope DataScope) DB {
 	return DB{
 		conn:            conn
 		scope:           scope
-		unscoped_fields: []
+		skip_all_scopes: false
+		skip_fields:     []
 	}
 }
 
 // unscoped returns a new DB with the specified fields excluded from DataScope filtering.
 // Call without arguments to skip ALL scope filters.
 pub fn (db DB) unscoped(unscoped_fields ...string) DB {
-	mut uf := []string{}
-	if unscoped_fields.len > 0 {
-		uf = unscoped_fields.map(it)
-	}
-	if uf.len == 0 {
-		uf = ['*']
+	if unscoped_fields.len == 0 {
+		return DB{
+			conn:            db.conn
+			scope:           db.scope
+			skip_all_scopes: true
+			skip_fields:     []
+		}
 	}
 	return DB{
 		conn:            db.conn
 		scope:           db.scope
-		unscoped_fields: uf
+		skip_all_scopes: false
+		skip_fields:     unscoped_fields.map(it)
 	}
 }
 
@@ -389,18 +398,18 @@ fn table_field_to_column_map(table Table) map[string]string {
 
 // apply_data_scope applies DataScope filters to a WHERE QueryData and returns the scoped query data.
 pub fn apply_data_scope(scope DataScope, table Table, where QueryData, scope_skip_fields []string) QueryData {
-	return apply_scope_filters(scope, table, where, scope_skip_fields, true)
+	return apply_scope_filters(scope, table, where, scope_skip_fields, .where)
 }
 
 // apply_data_scope_insert applies DataScope filters to an INSERT QueryData and returns the scoped query data.
 pub fn apply_data_scope_insert(scope DataScope, table Table, data QueryData, scope_skip_fields []string) QueryData {
-	return apply_scope_filters(scope, table, data, scope_skip_fields, false)
+	return apply_scope_filters(scope, table, data, scope_skip_fields, .insert)
 }
 
 // apply_scope_filters is the common core shared by apply_data_scope and
 // apply_data_scope_insert. In WHERE mode it also wraps original conditions
 // in parentheses and appends is_and / kinds markers.
-fn apply_scope_filters(scope DataScope, table Table, qd QueryData, scope_skip_fields []string, where_mode bool) QueryData {
+fn apply_scope_filters(scope DataScope, table Table, qd QueryData, scope_skip_fields []string, mode ScopeMode) QueryData {
 	if !scope.enabled || scope.filters.len == 0 {
 		return qd
 	}
@@ -408,17 +417,16 @@ fn apply_scope_filters(scope DataScope, table Table, qd QueryData, scope_skip_fi
 		return qd
 	}
 	mut result := clone_query_data(qd)
-	skip_all := '*' in scope_skip_fields
 	field_to_column := table_field_to_column_map(table)
 	// Wrap original WHERE clause in parentheses once, before adding scope filters
-	if where_mode && result.fields.len > 1 {
+	if mode == .where && result.fields.len > 1 {
 		result.parentheses << [0, result.fields.len - 1]
 	}
 	for filter in scope.filters {
 		if filter.field == '' || filter.field in result.fields {
 			continue
 		}
-		if skip_all || filter.field in scope_skip_fields {
+		if filter.field in scope_skip_fields {
 			continue
 		}
 		if table.fields.len > 0 && filter.field !in table.fields {
@@ -433,7 +441,7 @@ fn apply_scope_filters(scope DataScope, table Table, qd QueryData, scope_skip_fi
 		if column_name in result.fields {
 			continue
 		}
-		if where_mode {
+		if mode == .where {
 			result.is_and << true
 		}
 		result.fields << column_name.clone()
@@ -441,7 +449,7 @@ fn apply_scope_filters(scope DataScope, table Table, qd QueryData, scope_skip_fi
 			result.data << filter.value
 			result.types << primitive_type(filter.value)
 		}
-		if where_mode {
+		if mode == .where {
 			result.kinds << filter.operator
 		}
 	}
@@ -622,8 +630,9 @@ fn attr_name_matches(name string, expected string) bool {
 // select fetches rows through the wrapped connection, with DataScope applied.
 pub fn (mut db DB) select(config SelectConfig, data QueryData, where QueryData) ![][]Primitive {
 	mut cfg := config
-	if db.scope.enabled && db.scope.filters.len > 0 && !table_ignores_data_scope(cfg.table) {
-		where_scoped := apply_data_scope(db.scope, cfg.table, where, db.unscoped_fields)
+	if db.scope.enabled && db.scope.filters.len > 0 && !db.skip_all_scopes
+		&& !table_ignores_data_scope(cfg.table) {
+		where_scoped := apply_data_scope(db.scope, cfg.table, where, db.skip_fields)
 		if where_scoped.fields.len > where.fields.len {
 			cfg.has_where = true
 		}
@@ -635,8 +644,9 @@ pub fn (mut db DB) select(config SelectConfig, data QueryData, where QueryData) 
 // insert inserts rows through the wrapped connection, with DataScope applied.
 pub fn (mut db DB) insert(table Table, data QueryData) ! {
 	mut data_scoped := data
-	if db.scope.enabled && db.scope.filters.len > 0 && !table_ignores_data_scope(table) {
-		data_scoped = apply_data_scope_insert(db.scope, table, data, db.unscoped_fields)
+	if db.scope.enabled && db.scope.filters.len > 0 && !db.skip_all_scopes
+		&& !table_ignores_data_scope(table) {
+		data_scoped = apply_data_scope_insert(db.scope, table, data, db.skip_fields)
 	}
 	return db.conn.insert(table, data_scoped)
 }
@@ -644,8 +654,9 @@ pub fn (mut db DB) insert(table Table, data QueryData) ! {
 // update updates rows through the wrapped connection, with DataScope applied.
 pub fn (mut db DB) update(table Table, data QueryData, where QueryData) ! {
 	mut where_scoped := where
-	if db.scope.enabled && db.scope.filters.len > 0 && !table_ignores_data_scope(table) {
-		where_scoped = apply_data_scope(db.scope, table, where, db.unscoped_fields)
+	if db.scope.enabled && db.scope.filters.len > 0 && !db.skip_all_scopes
+		&& !table_ignores_data_scope(table) {
+		where_scoped = apply_data_scope(db.scope, table, where, db.skip_fields)
 	}
 	return db.conn.update(table, data, where_scoped)
 }
@@ -653,8 +664,9 @@ pub fn (mut db DB) update(table Table, data QueryData, where QueryData) ! {
 // delete deletes rows through the wrapped connection, with DataScope applied.
 pub fn (mut db DB) delete(table Table, where QueryData) ! {
 	mut where_scoped := where
-	if db.scope.enabled && db.scope.filters.len > 0 && !table_ignores_data_scope(table) {
-		where_scoped = apply_data_scope(db.scope, table, where, db.unscoped_fields)
+	if db.scope.enabled && db.scope.filters.len > 0 && !db.skip_all_scopes
+		&& !table_ignores_data_scope(table) {
+		where_scoped = apply_data_scope(db.scope, table, where, db.skip_fields)
 	}
 	return db.conn.delete(table, where_scoped)
 }

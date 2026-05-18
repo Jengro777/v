@@ -721,18 +721,6 @@ fn test_apply_data_scope_skip_single_field() {
 	assert result.data == []
 }
 
-fn test_apply_data_scope_skip_all_with_wildcard() {
-	scope := scope_single_tenant(5)
-	where := orm.QueryData{}
-	table := orm.Table{
-		name: 'users'
-	}
-	// Skip all with ['*']
-	result := orm.apply_data_scope(scope, table, where, ['*'])
-	assert result.fields == []
-	assert result.data == []
-}
-
 fn test_apply_data_scope_skip_field_still_applies_others() {
 	scope := orm.DataScope{
 		filters: [
@@ -781,21 +769,6 @@ fn test_apply_data_scope_insert_skip_single_field() {
 	}
 	// Skip 'tenant_id' in insert - should not inject it
 	result := orm.apply_data_scope_insert(scope, table, data, ['tenant_id'])
-	assert result.fields == ['name']
-	assert result.data == [orm.Primitive('alice')]
-}
-
-fn test_apply_data_scope_insert_skip_all_with_wildcard() {
-	scope := scope_single_tenant(99)
-	data := orm.QueryData{
-		fields: ['name']
-		data:   [orm.Primitive('alice')]
-	}
-	table := orm.Table{
-		name: 'users'
-	}
-	// Skip all with ['*'] in insert
-	result := orm.apply_data_scope_insert(scope, table, data, ['*'])
 	assert result.fields == ['name']
 	assert result.data == [orm.Primitive('alice')]
 }
