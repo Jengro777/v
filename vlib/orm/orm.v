@@ -319,9 +319,11 @@ fn table_ignores_data_scope(table Table) bool {
 }
 
 // DB implements orm.Connection with DataScope support.
+// When the wrapped connection also implements TransactionalConnection,
+// the DB will transparently proxy transaction methods (orm_begin, orm_commit, ...).
 pub struct DB {
 pub mut:
-	conn TransactionalConnection
+	conn Connection
 pub:
 	scope           DataScope
 	unscoped_fields []string
@@ -348,7 +350,7 @@ pub:
 }
 
 // new_db creates a new DB with DataScope applied.
-pub fn new_db(conn TransactionalConnection, scope DataScope) DB {
+pub fn new_db(conn Connection, scope DataScope) DB {
 	return DB{
 		conn:            conn
 		scope:           scope
@@ -699,33 +701,75 @@ pub fn (mut db DB) last_id() int {
 // DB implements orm.TransactionalConnection (decorator) -----------------------
 
 // orm_begin begins a transaction on the underlying connection.
+// Returns an error if the underlying connection does not support transactions.
 pub fn (mut db DB) orm_begin() ! {
-	db.conn.orm_begin()!
+	if db.conn is TransactionalConnection {
+		mut conn := db.conn
+		mut tc := unsafe { &conn as TransactionalConnection }
+		tc.orm_begin()!
+	} else {
+		return error('orm.DB: underlying connection does not support transactions')
+	}
 }
 
 // orm_commit commits the current transaction on the underlying connection.
+// Returns an error if the underlying connection does not support transactions.
 pub fn (mut db DB) orm_commit() ! {
-	db.conn.orm_commit()!
+	if db.conn is TransactionalConnection {
+		mut conn := db.conn
+		mut tc := unsafe { &conn as TransactionalConnection }
+		tc.orm_commit()!
+	} else {
+		return error('orm.DB: underlying connection does not support transactions')
+	}
 }
 
 // orm_rollback rolls back the current transaction on the underlying connection.
+// Returns an error if the underlying connection does not support transactions.
 pub fn (mut db DB) orm_rollback() ! {
-	db.conn.orm_rollback()!
+	if db.conn is TransactionalConnection {
+		mut conn := db.conn
+		mut tc := unsafe { &conn as TransactionalConnection }
+		tc.orm_rollback()!
+	} else {
+		return error('orm.DB: underlying connection does not support transactions')
+	}
 }
 
 // orm_savepoint creates a savepoint with the given name on the underlying connection.
+// Returns an error if the underlying connection does not support transactions.
 pub fn (mut db DB) orm_savepoint(name string) ! {
-	db.conn.orm_savepoint(name)!
+	if db.conn is TransactionalConnection {
+		mut conn := db.conn
+		mut tc := unsafe { &conn as TransactionalConnection }
+		tc.orm_savepoint(name)!
+	} else {
+		return error('orm.DB: underlying connection does not support transactions')
+	}
 }
 
 // orm_rollback_to rolls back to the named savepoint on the underlying connection.
+// Returns an error if the underlying connection does not support transactions.
 pub fn (mut db DB) orm_rollback_to(name string) ! {
-	db.conn.orm_rollback_to(name)!
+	if db.conn is TransactionalConnection {
+		mut conn := db.conn
+		mut tc := unsafe { &conn as TransactionalConnection }
+		tc.orm_rollback_to(name)!
+	} else {
+		return error('orm.DB: underlying connection does not support transactions')
+	}
 }
 
 // orm_release_savepoint releases the named savepoint on the underlying connection.
+// Returns an error if the underlying connection does not support transactions.
 pub fn (mut db DB) orm_release_savepoint(name string) ! {
-	db.conn.orm_release_savepoint(name)!
+	if db.conn is TransactionalConnection {
+		mut conn := db.conn
+		mut tc := unsafe { &conn as TransactionalConnection }
+		tc.orm_release_savepoint(name)!
+	} else {
+		return error('orm.DB: underlying connection does not support transactions')
+	}
 }
 
 fn clone_query_data(data QueryData) QueryData {
