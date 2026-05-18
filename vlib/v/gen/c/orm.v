@@ -2192,6 +2192,7 @@ fn (mut g Gen) write_orm_select(node ast.SqlExpr, connection_var_name string, re
 	g.writeln('.kinds = builtin____new_array_with_default_noscan(0, 0, sizeof(orm__OperationKind), 0),')
 	g.writeln('.is_and = builtin____new_array_with_default_noscan(0, 0, sizeof(bool), 0),')
 	g.writeln('.parentheses = builtin____new_array_with_default_noscan(0, 0, sizeof(Array_${ast.int_type_name}), 0),')
+	g.writeln('.fields = builtin____new_array_with_default_noscan(0, 0, sizeof(string), 0),')
 	if exprs.len > 0 {
 		g.write('.data = builtin__new_array_from_c_array(${exprs.len}, ${exprs.len}, sizeof(orm__Primitive),')
 		g.write(' _MOV((orm__Primitive[${exprs.len}]){')
@@ -2218,6 +2219,7 @@ fn (mut g Gen) write_orm_select(node ast.SqlExpr, connection_var_name string, re
 		g.writeln('.kinds = builtin____new_array_with_default_noscan(0, 0, sizeof(orm__OperationKind), 0),')
 		g.writeln('.is_and = builtin____new_array_with_default_noscan(0, 0, sizeof(bool), 0),')
 		g.writeln('.parentheses = builtin____new_array_with_default_noscan(0, 0, sizeof(Array_${ast.int_type_name}), 0),')
+		g.writeln('.fields = builtin____new_array_with_default_noscan(0, 0, sizeof(string), 0),')
 		g.writeln('.data = builtin____new_array_with_default_noscan(0, 0, sizeof(orm__Primitive), 0)')
 		g.indent--
 		g.writeln('}')
@@ -2522,6 +2524,10 @@ fn (g &Gen) orm_table_field_names(typ ast.Type) []string {
 				names << g.orm_table_field_names(field.typ)
 			}
 		} else {
+			// Skip fields with @[skip] or @[sql:'-'] as they have no database column
+			if field.attrs.contains('skip') || field.attrs.contains_arg('sql', '-') {
+				continue
+			}
 			names << field.name
 		}
 	}
@@ -2542,6 +2548,10 @@ fn (g &Gen) orm_table_column_names(typ ast.Type) []string {
 				names << g.orm_table_column_names(field.typ)
 			}
 		} else {
+			// Skip fields with @[skip] or @[sql:'-'] as they have no database column
+			if field.attrs.contains('skip') || field.attrs.contains_arg('sql', '-') {
+				continue
+			}
 			names << g.get_orm_column_name_from_struct_field(field)
 		}
 	}
