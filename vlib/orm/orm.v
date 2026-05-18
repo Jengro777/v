@@ -1,4 +1,3 @@
-@[has_globals]
 module orm
 
 import time
