@@ -336,9 +336,11 @@ pub:
 }
 
 // QueryFilter represents a single filter condition in a DataScope.
-// `field` must be a struct field name (not SQL column name). It is automatically
-// resolved to the corresponding SQL column name via `Table.fields`/`Table.columns`
-// at query time. If the field cannot be resolved, the filter is skipped for that table.
+// `field` should normally be a struct field name rather than a SQL column name.
+// When `Table.fields`/`Table.columns` metadata is available, it is resolved to the
+// corresponding SQL column name at query time. If that metadata is unavailable,
+// the ORM may fall back to using `field` directly as the SQL column name. In
+// metadata-driven paths, unresolved fields are skipped for that table.
 pub struct QueryFilter {
 pub:
 	field    string
@@ -372,6 +374,18 @@ pub fn (db DB) unscoped(unscoped_fields ...string) DB {
 	}
 }
 
+// table_field_to_column_map builds an O(1) lookup from struct field names
+// to SQL column names.
+fn table_field_to_column_map(table Table) map[string]string {
+	mut m := map[string]string{}
+	if table.columns.len > 0 && table.columns.len == table.fields.len {
+		for j, field_name in table.fields {
+			m[field_name] = table.columns[j]
+		}
+	}
+	return m
+}
+
 // apply_data_scope applies DataScope filters to a WHERE QueryData and returns the scoped query data.
 pub fn apply_data_scope(scope DataScope, table Table, where QueryData, scope_skip_fields []string) QueryData {
 	if !scope.enabled || scope.filters.len == 0 {
@@ -382,13 +396,7 @@ pub fn apply_data_scope(scope DataScope, table Table, where QueryData, scope_ski
 	}
 	mut where_scoped := clone_query_data(where)
 	skip_all := '*' in scope_skip_fields
-	// Build field-to-column lookup map for O(1) resolution
-	mut field_to_column := map[string]string{}
-	if table.columns.len > 0 && table.columns.len == table.fields.len {
-		for j, field_name in table.fields {
-			field_to_column[field_name] = table.columns[j]
-		}
-	}
+	field_to_column := table_field_to_column_map(table)
 	// Wrap original WHERE clause in parentheses once, before adding scope filters
 	original_fields_len := where_scoped.fields.len
 	if original_fields_len > 1 {
@@ -434,13 +442,7 @@ pub fn apply_data_scope_insert(scope DataScope, table Table, data QueryData, sco
 	}
 	mut data_scoped := clone_query_data(data)
 	skip_all := '*' in scope_skip_fields
-	// Build field-to-column lookup map for O(1) resolution
-	mut field_to_column := map[string]string{}
-	if table.columns.len > 0 && table.columns.len == table.fields.len {
-		for j, field_name in table.fields {
-			field_to_column[field_name] = table.columns[j]
-		}
-	}
+	field_to_column := table_field_to_column_map(table)
 	for filter in scope.filters {
 		if filter.field == '' || filter.field in data_scoped.fields {
 			continue
@@ -461,8 +463,10 @@ pub fn apply_data_scope_insert(scope DataScope, table Table, data QueryData, sco
 			continue
 		}
 		data_scoped.fields << column_name.clone()
-		data_scoped.data << filter.value
-		data_scoped.types << primitive_type(filter.value)
+		if !filter.operator.is_unary() {
+			data_scoped.data << filter.value
+			data_scoped.types << primitive_type(filter.value)
+		}
 	}
 	return data_scoped
 }
