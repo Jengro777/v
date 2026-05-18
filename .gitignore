@@ -169,7 +169,3 @@ issue*
 cmd/v2/*.txt
 cmd/v2/*.json
 .claude/
-v1
-v2
-v3
-v4
